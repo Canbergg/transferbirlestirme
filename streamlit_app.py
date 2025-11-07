@@ -1,4 +1,5 @@
 import io
+import re
 import pandas as pd
 import streamlit as st
 
@@ -12,26 +13,33 @@ OUTPUT_COLS = [
 ]
 
 # ----------------- Başlık eşleme: alias listeleri -----------------
+# Not: 'toplam' listesinden 'satış/sales' bilerek çıkarıldı.
 ALIASES = {
     "depo_kodu": [
-        "depo kodu", "depo_kodu", "magaza kodu", "mağaza kodu", "warehouse code", "store code", "site code"
+        "depo kodu", "depo_kodu", "magaza kodu", "mağaza kodu",
+        "warehouse code", "store code", "site code"
     ],
     "depo_adi": [
-        "depo adı", "depo adi", "magaza adı", "mağaza adı", "warehouse name", "store name"
+        "depo adı", "depo adi", "magaza adı", "mağaza adı",
+        "warehouse name", "store name"
     ],
     "madde_kodu": [
-        "madde kodu", "urun kodu", "ürün kodu", "sku", "item code", "product code", "stok kodu"
+        "madde kodu", "urun kodu", "ürün kodu", "sku",
+        "item code", "product code", "stok kodu"
     ],
     "madde_aciklamasi": [
-        "madde açıklaması", "urun adi", "ürün adı", "aciklama", "açıklama", "item name", "product name", "description"
+        "madde açıklaması", "urun adi", "ürün adı",
+        "aciklama", "açıklama", "item name", "product name", "description"
     ],
     "minimum_miktar": [
-        "minimum miktar", "min miktar", "min stok", "minimum", "safety stock", "ss", "min_qty", "min qty"
+        "minimum miktar", "min miktar", "min. miktar",
+        "min stok", "minimum", "minimummiktar",
+        "emniyet stoğu", "emniyet stogu",
+        "min qty", "minimum qty", "safety stock", "safety stock qty"
     ],
     "envanter": [
         "envanter", "stok", "qty on hand", "quantity on hand", "on hand"
     ],
-    # >>> Burada "satış/satis/sales" ÇIKARILDI; sadece 'Toplam' varyasyonları kaldı.
     "toplam": [
         "toplam", "total", "genel toplam", "sum"
     ],
@@ -45,9 +53,12 @@ def read_xlsx(file):
     return pd.read_excel(file, sheet_name=0, header=0, dtype=str)
 
 def normalize_text(s: str) -> str:
+    """Türkçe harf düzeltmesi + NBSP temizleme + noktalama/underscore temizleme + çoklu boşlukları tek boşluk yapma."""
     if s is None:
         return ""
     s = str(s)
+
+    # Türkçe karakter haritalaması
     tr_map = str.maketrans({
         "İ": "i", "I": "i", "ı": "i",
         "Ş": "s", "ş": "s",
@@ -56,20 +67,40 @@ def normalize_text(s: str) -> str:
         "Ö": "o", "ö": "o",
         "Ü": "u", "ü": "u",
     })
-    return s.translate(tr_map).lower().strip()
+    s = s.translate(tr_map).lower()
+
+    # NBSP ve benzeri boşluk karakterlerini normal boşluğa çevir
+    s = s.replace("\u00A0", " ").replace("\u2007", " ").replace("\u202F", " ")
+
+    # Alt çizgi ve tire gibi ayraçları boşluğa çevir
+    s = re.sub(r"[_\-]+", " ", s)
+
+    # Noktalama işaretlerini sil (harf/rakam ve boşluk dışını kaldır)
+    s = re.sub(r"[^a-z0-9 ]+", "", s)
+
+    # Çoklu boşlukları tek boşluğa indir ve kırp
+    s = re.sub(r"\s+", " ", s).strip()
+
+    return s
+
+def _tokenize(norm: str):
+    return [t for t in norm.split(" ") if t]
 
 def find_col(df: pd.DataFrame, alias_keys: list) -> str:
     """
-    df içindeki kolon adlarını normalize eder; ALIASES'taki alias kümeleriyle eşleştirir.
-    Önce tam eşleşme, sonra 'içerir' (contains) denemesi yapar.
-    Bulamazsa açıklayıcı hata verir.
+    1) Tam eşleşme (normalize)
+    2) İçerir (contains) eşleşmesi
+    3) Heuristik: alias ifadelerindeki tüm token'ları içeren kolon adını bul
+    Bulamazsa açıklayıcı hata ve mevcut başlıkları göster.
     """
+    # hedef alias'ları topla ve normalize et
     wanted = set()
     for key in alias_keys:
         wanted.update(ALIASES.get(key, []))
     wanted_norm = [normalize_text(x) for x in wanted]
 
-    norm_map = {}
+    # mevcut kolonları normalize et -> orijinal ad
+    norm_map = {}  # normalize_ad -> orijinal_ad
     for c in df.columns:
         norm_map[normalize_text(c)] = c
 
@@ -79,14 +110,23 @@ def find_col(df: pd.DataFrame, alias_keys: list) -> str:
             return norm_map[norm]
 
     # 2) İçerir eşleşmesi
-    for norm in norm_map.keys():
+    for norm_col, orig in norm_map.items():
         for w in wanted_norm:
-            if w and w in norm:
-                return norm_map[norm]
+            if w and w in norm_col:
+                return orig
 
+    # 3) Heuristik: tüm token'lar kolon adında geçiyor mu?
+    for norm_col, orig in norm_map.items():
+        for w in wanted_norm:
+            tokens = _tokenize(w)
+            if tokens and all(tok in norm_col for tok in tokens):
+                return orig
+
+    # Hata: mevcut başlıkları kullanıcıya göster
+    cols_list = ", ".join([str(c) for c in df.columns])
     raise KeyError(
-        "Aranan başlık bulunamadı. Arananlar: "
-        f"{sorted(wanted)} | Mevcut başlıklar: {list(df.columns)}"
+        "Aranan başlık bulunamadı. Aranan varyasyonlar: "
+        f"{sorted(wanted)} | Mevcut başlıklar: {cols_list}"
     )
 
 def to_str_strip(s):
@@ -98,6 +138,7 @@ def make_pair_from_cols(df, depo_col, madde_col):
     return df[depo_col] + "|" + df[madde_col]
 
 def safe_number_series(s):
+    # Nokta/virgül normalize et, sayı olmayanı 0 yap
     s = s.astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
     return pd.to_numeric(s, errors="coerce").fillna(0)
 
@@ -167,7 +208,7 @@ if go:
         df3 = read_xlsx(f3)
         depo_kodu_3  = find_col(df3, ["depo_kodu"])
         madde_kodu_3 = find_col(df3, ["madde_kodu"])
-        toplam_col   = find_col(df3, ["toplam"])  # artık 'satış/sales' aranmaz
+        toplam_col   = find_col(df3, ["toplam"])  # 'satış/sales' yok
         df3 = df3[[depo_kodu_3, madde_kodu_3, toplam_col]].copy()
         df3.columns = ["Depo Kodu", "Madde Kodu", "Toplam"]
         df3["Pair"] = make_pair_from_cols(df3, "Depo Kodu", "Madde Kodu")
