@@ -1,20 +1,3 @@
-# streamlit_app.py
-# -------------------------------------------------------------
-# Amaç:
-# 4 farklı dosyadan (1) Raf Stok, (2) Stok Verisi, (3) Satış Verisi, (4) Günlük Stok Verisi
-# alanlarını okuyup tek bir çıktı üretmek:
-#   Pair | Depo Kodu | Depo Adı | Madde Kodu | Madde Açıklaması | Minimum Miktar | Stok | Satış | Envanter Gün Sayısı
-#
-# Kurallar (Kullanıcı talimatına göre):
-# - Tüm dosyalarda key = Depo Kodu + Madde Kodu  (bu dosyada 'Pair' alanı)
-# - 1. Dosya: Depo Kodu, Depo Adı, Madde Kodu, Madde Açıklaması, Minimum Miktar alınır → temel tablo + Pair oluşturulur
-# - 2. Dosya: Envanter sütunu alınır ve Pair'e göre eşlenir → Çıktıdaki 'Stok'
-#   * NOT: Aynı key birden fazla satır YOK → toplama yapılmaz; ilk değer alınır
-# - 3. Dosya: Toplam sütunu alınır ve Pair'e göre eşlenir → Çıktıdaki 'Satış'
-#   * NOT: Aynı key birden fazla satır YOK → toplama yapılmaz; ilk değer alınır
-# - 4. Dosya: Pair bazında Miktar > 0 olan satırların adedi sayılır → 'Envanter Gün Sayısı'
-# -------------------------------------------------------------
-
 import io
 import pandas as pd
 import streamlit as st
@@ -29,7 +12,6 @@ OUTPUT_COLS = [
 ]
 
 # ----------------- Yardımcılar -----------------
-
 def read_xlsx(file):
     return pd.read_excel(file, sheet_name=0, header=0, dtype=str)
 
@@ -49,41 +31,43 @@ def safe_number_series(s):
 # ----------------- UI -----------------
 with st.sidebar:
     st.markdown("### 1) Ana Dosya (kimlik + Minimum Miktar)")
-    f1 = st.file_uploader("1. Dosya", type=["xlsx","xls"], key="f1")
+    f1 = st.file_uploader("1. Dosya", type=["xlsx", "xls"], key="f1")
     st.markdown("Beklenen sütunlar: **Depo Kodu, Depo Adı, Madde Kodu, Madde Açıklaması, Minimum Miktar**")
 
-    st.markdown("---
-### 2) Stok Kaynağı (Envanter→Stok)")
-    f2 = st.file_uploader("2. Dosya", type=["xlsx","xls"], key="f2")
+    st.markdown("---")
+    st.markdown("### 2) Stok Kaynağı (Envanter→Stok)")
+    f2 = st.file_uploader("2. Dosya", type=["xlsx", "xls"], key="f2")
     st.markdown("Beklenen sütunlar: **Depo Kodu, Madde Kodu, Envanter**")
 
-    st.markdown("---
-### 3) Satış Kaynağı (Toplam→Satış)")
-    f3 = st.file_uploader("3. Dosya", type=["xlsx","xls"], key="f3")
+    st.markdown("---")
+    st.markdown("### 3) Satış Kaynağı (Toplam→Satış)")
+    f3 = st.file_uploader("3. Dosya", type=["xlsx", "xls"], key="f3")
     st.markdown("Beklenen sütunlar: **Depo Kodu, Madde Kodu, Toplam**")
 
-    st.markdown("---
-### 4) Envanter Gün Sayısı (Miktar>0 sayısı)")
-    f4 = st.file_uploader("4. Dosya", type=["xlsx","xls"], key="f4")
+    st.markdown("---")
+    st.markdown("### 4) Envanter Gün Sayısı (Miktar>0 sayısı)")
+    f4 = st.file_uploader("4. Dosya", type=["xlsx", "xls"], key="f4")
     st.markdown("Beklenen sütunlar: **Depo Kodu, Madde Kodu, Miktar**")
 
     st.markdown("---")
     do_preview = st.checkbox("Ön izleme göster", value=True)
     go = st.button("▶️ İşle")
 
-colL, colR = st.columns([3,2])
+colL, colR = st.columns([3, 2])
 
 if go:
     # 1) Ana dosya
     if not f1:
         st.error("1. dosyayı yüklemeden işlem yapılamaz.")
         st.stop()
+
     df1 = read_xlsx(f1)
     need_cols1 = ["Depo Kodu", "Depo Adı", "Madde Kodu", "Madde Açıklaması", "Minimum Miktar"]
     for c in need_cols1:
         if c not in df1.columns:
             st.error(f"1. Dosyada '{c}' kolonu eksik.")
             st.stop()
+
     df1 = df1[need_cols1].copy()
     df1["Pair"] = make_pair(df1, "Depo Kodu", "Madde Kodu")
     df1["Minimum Miktar"] = safe_number_series(df1["Minimum Miktar"])  # sayısal
@@ -99,7 +83,7 @@ if go:
                 st.stop()
         df2 = df2[need_cols2].copy()
         df2["Pair"] = make_pair(df2, "Depo Kodu", "Madde Kodu")
-        df2["Envanter"] = safe_number_series(df2["Envanter"])  # sayısal
+        df2["Envanter"] = safe_number_series(df2["Envanter"])
         stok_map = df2.drop_duplicates("Pair").set_index("Pair")["Envanter"].to_dict()
 
     # 3) Satış: Toplam -> Satış (birden fazla satır yok; ilk değer)
@@ -113,7 +97,7 @@ if go:
                 st.stop()
         df3 = df3[need_cols3].copy()
         df3["Pair"] = make_pair(df3, "Depo Kodu", "Madde Kodu")
-        df3["Toplam"] = safe_number_series(df3["Toplam"])  # sayısal
+        df3["Toplam"] = safe_number_series(df3["Toplam"])
         satis_map = df3.drop_duplicates("Pair").set_index("Pair")["Toplam"].to_dict()
 
     # 4) Envanter Gün Sayısı: Miktar > 0 sayısı (Pair bazında)
@@ -127,43 +111,36 @@ if go:
                 st.stop()
         df4 = df4[need_cols4].copy()
         df4["Pair"] = make_pair(df4, "Depo Kodu", "Madde Kodu")
-        miktar_num = safe_number_series(df4["Miktar"])  # sayısal
+        miktar_num = safe_number_series(df4["Miktar"])
         df4["_POS"] = (miktar_num > 0).astype(int)
         gun_map = df4.groupby("Pair", as_index=True)["_POS"].sum().astype(int).to_dict()
 
     # Çıkış tablosu
-    out = df1[["Pair","Depo Kodu","Depo Adı","Madde Kodu","Madde Açıklaması","Minimum Miktar"]].copy()
+    out = df1[["Pair", "Depo Kodu", "Depo Adı", "Madde Kodu", "Madde Açıklaması", "Minimum Miktar"]].copy()
     out["Stok"] = out["Pair"].map(stok_map).fillna(0)
     out["Satış"] = out["Pair"].map(satis_map).fillna(0)
     out["Envanter Gün Sayısı"] = out["Pair"].map(gun_map).fillna(0).astype(int)
 
-    # Tip uyumu
     out["Stok"] = pd.to_numeric(out["Stok"], errors="coerce").fillna(0)
     out["Satış"] = pd.to_numeric(out["Satış"], errors="coerce").fillna(0)
 
-    # Sıra ve görüntüleme
     out = out.reindex(columns=OUTPUT_COLS)
 
     if do_preview:
         colL.markdown("### Ön İzleme")
         colL.dataframe(out.head(200), use_container_width=True)
 
-    # İndir
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as wr:
         out.to_excel(wr, index=False, sheet_name="Output")
     buffer.seek(0)
+
     colR.download_button(
         label="💾 Çıktıyı İndir (Excel)",
         data=buffer.getvalue(),
         file_name="cikti_birlesik.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-else:
-    colL = st.container()
-    colL.info("Sol taraftan dosyaları yükleyip **İşle** butonuna basın.")
 
-# ----------------- Notlar -----------------
-# - 2. ve 3. dosya için aynı key tekrarı beklenmiyor; bu yüzden ilk değer esas alınır.
-# - 4. dosyada 'Miktar' > 0 koşuluna göre gün sayımı yapılır.
-# - Gerekirse Pair ayırıcısı '|' yerine '-' olarak değiştirilebilir.
+else:
+    colL.info("Sol taraftan dosyaları yükleyip **İşle** butonuna basın.")
